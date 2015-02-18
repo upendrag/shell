@@ -1,5 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #define QUIT_CMD "quit"
 #define MAX_CMD_LEN 512
@@ -44,11 +47,36 @@ void remove_end_of_line(char *line)
 
 char* trim_word(char *word)
 {
-    while(*word == ' ') word++;
+    while (*word == ' ' && *word != 0) word++;
+    if (*word == 0) return NULL;
     char *tmp = word;
-    while(*tmp != ' ') tmp++;
+    while (*tmp != ' ' && *tmp != 0) tmp++;
     *tmp = 0;
     return word;
+}
+
+void start_new_program(char *cmd)
+{
+    pid_t pid;
+    pid = fork();
+    if (pid > 0) {
+        int status;
+        waitpid(pid, &status, 0);
+        if (status) {
+            fprintf(stderr, "Unexpected termination: pid: %d\n", pid);
+        }
+    } /* parent  */
+    else if(pid == 0) {
+        //fprintf(stdout, "shell: Child process spawned\n");
+        char *argv[] = { cmd };
+        if (!execvp(*argv, argv)) {
+            perror("shell:");
+        }
+        exit(EXIT_SUCCESS);
+    } /* child  */
+    else {
+        perror("shell: start_new_program");
+    } /* error  */
 }
 
 int run_in_interactive_mode()
@@ -57,12 +85,17 @@ int run_in_interactive_mode()
     char *cmd;
     while (1) {
         print_prompt();
-        fgets(cmd_text, MAX_CMD_LEN, stdin);
+        if (!fgets(cmd_text, MAX_CMD_LEN, stdin)) {
+            fprintf(stdout, "\n");
+            exit(EXIT_SUCCESS);
+        }
         remove_end_of_line(cmd_text);
         cmd = trim_word(cmd_text);
+        if (!cmd) continue;
         if (compare_text(cmd, QUIT_CMD) == 0) {
             break;  /* exit prompt  */
         }
+        start_new_program(cmd);
     } /* run till 'quit' is called  */
     return 0;
 }
