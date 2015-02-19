@@ -1,8 +1,8 @@
 all:
-	gcc -Wall -o bin/shell src/main.c
+	gcc -Wall -pthread -o bin/shell src/main.c
 
 debug:
-	gcc -g -Wall -o bin/shell src/main.c
+	gcc -g -Wall -pthread -o bin/shell src/main.c
 
 clean:
 	rm bin/*

@@ -1,11 +1,15 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #define QUIT_CMD "quit"
 #define MAX_CMD_LEN 512
+#define ARGS_DELIM " "
+#define CMD_DELIM ";"
 
 inline void print_error(const char *message)
 {
@@ -20,6 +24,7 @@ inline void print_prompt()
 int compare_text(const char *t1, const char *t2)
 {
     int result = 0;
+
     while (*t1 != 0 && *t2 != 0 ) {
         if (*t1 > *t2) {
             result = 1;
@@ -41,6 +46,7 @@ int compare_text(const char *t1, const char *t2)
 void remove_end_of_line(char *line)
 {
     int i = 0;
+
     while (line[i] != '\n' && i < MAX_CMD_LEN) i++;
     line[i] = 0;
 }
@@ -50,14 +56,19 @@ char* trim_word(char *word)
     while (*word == ' ' && *word != 0) word++;
     if (*word == 0) return NULL;
     char *tmp = word;
-    while (*tmp != ' ' && *tmp != 0) tmp++;
-    *tmp = 0;
+    while (*tmp != 0) tmp++;
+    do {
+        tmp--;
+    } while (*tmp == ' ');
+    *(tmp + 1) = 0;
     return word;
 }
 
-void start_new_program(char *cmd)
+void start_new_program(void *command)
 {
     pid_t pid;
+    char *cmd = (char *)command;
+
     pid = fork();
     if (pid > 0) {
         int status;
@@ -67,22 +78,95 @@ void start_new_program(char *cmd)
         }
     } /* parent  */
     else if(pid == 0) {
-        //fprintf(stdout, "shell: Child process spawned\n");
-        char *argv[] = { cmd };
+        int ret_val = EXIT_SUCCESS;
+        char **argv = NULL;
+        char *arg = strtok(cmd, ARGS_DELIM);
+        int i = 0;
+        while (arg != NULL) {
+            if (!argv) argv = (char **)malloc(sizeof(char *));
+            else argv = (char **)realloc(argv, sizeof(char *));
+            argv[i++] = arg;
+            arg = strtok(NULL, ARGS_DELIM);
+        }
+        /* NULL termination of arguments */
+        argv = (char **)realloc(argv, sizeof(char *));
+        argv[i] = NULL;
+
         if (!execvp(*argv, argv)) {
             perror("shell:");
+            ret_val = EXIT_FAILURE;
         }
-        exit(EXIT_SUCCESS);
+        fprintf(stderr, "command not found: %s\n", *argv);
+        /* free argv */
+        free(argv);
+        exit(ret_val);
     } /* child  */
     else {
         perror("shell: start_new_program");
     } /* error  */
 }
 
+char** get_commands(char *cmd_text, int *num_commands)
+{
+    char **commands = NULL;
+    char *cmd, *trimmed_cmd;
+    int i = 0;
+
+    cmd = strtok(cmd_text, CMD_DELIM);
+    while (cmd != NULL) {
+        trimmed_cmd = trim_word(cmd);
+        if (trimmed_cmd) {
+            if (!commands) commands = (char **) malloc(sizeof(char *));
+            else commands = (char **) realloc(commands, sizeof(char *));
+            commands[i++] = trimmed_cmd;
+        }
+        cmd = strtok(NULL, CMD_DELIM);
+    }
+    *num_commands = i;
+    return commands;
+}
+
+void execute_commands(char **commands, int num_commands)
+{
+    int do_quit = -1;
+    int i = 0, thread_code;
+    pthread_t threads[num_commands]; 
+
+    for (i = 0; i < num_commands; i++) {
+        if (strcmp(commands[i], QUIT_CMD) == 0) {
+            do_quit = i;            
+            break;
+        }
+    }
+    for (i = 0; i < num_commands; i++) {
+        if (i == do_quit) continue;        
+
+        thread_code = pthread_create(&threads[i], NULL, 
+            (void *) start_new_program, commands[i]);
+        if (thread_code) {
+            fprintf(stderr, "shell: Error creating thread; return code: %d\n", 
+                    thread_code);
+        }
+    }
+    
+    for (i = 0; i < num_commands; i++) {
+        if(i == do_quit) continue;
+        if (pthread_join(threads[i], NULL)) perror("shell");
+    }
+    
+    if (do_quit > -1) {
+        free(commands);
+        /* there is a quit command */
+        exit(EXIT_SUCCESS);
+    }
+}
+
 int run_in_interactive_mode()
 {
     char cmd_text[MAX_CMD_LEN];
-    char *cmd;
+    char **commands = NULL;
+    int num_commands;
+
     while (1) {
         print_prompt();
         if (!fgets(cmd_text, MAX_CMD_LEN, stdin)) {
@@ -90,12 +174,11 @@ int run_in_interactive_mode()
             exit(EXIT_SUCCESS);
         }
         remove_end_of_line(cmd_text);
-        cmd = trim_word(cmd_text);
-        if (!cmd) continue;
-        if (compare_text(cmd, QUIT_CMD) == 0) {
-            break;  /* exit prompt  */
-        }
-        start_new_program(cmd);
+        num_commands = 0;
+        commands = get_commands(cmd_text, &num_commands);
+        if(num_commands)
+            execute_commands(commands, num_commands);
+        free(commands);
     } /* run till 'quit' is called  */
     return 0;
 }
@@ -108,10 +191,11 @@ int run_in_batch_mode(const char *file)
 int main(int argc, char *argv[])
 {
     int ret_val = 0;
+
     if (argc > 2) {
         print_error("Invalid arguments");
         print_error("Usage: shell <file>");
-        exit(-1);
+        exit(EXIT_FAILURE);
     }
 
     if (argc == 1) {
