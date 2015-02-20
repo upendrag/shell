@@ -11,16 +11,6 @@
 #define ARGS_DELIM " "
 #define CMD_DELIM ";"
 
-inline void print_error(const char *message)
-{
-    fprintf(stderr, "shell: %s\n", message);
-}
-
-inline void print_prompt()
-{
-    fprintf(stdout, "shell-prompt> ");
-}
-
 int compare_text(const char *t1, const char *t2)
 {
     int result = 0;
@@ -161,30 +151,48 @@ void execute_commands(char **commands, int num_commands)
     }
 }
 
+void execute_line(char *cmd_text)
+{
+    char **commands = NULL;
+    int num_commands = 0;
+
+    remove_end_of_line(cmd_text);
+    commands = get_commands(cmd_text, &num_commands);
+    if(num_commands)
+        execute_commands(commands, num_commands);
+    free(commands);
+}
+
 int run_in_interactive_mode()
 {
     char cmd_text[MAX_CMD_LEN];
-    char **commands = NULL;
-    int num_commands;
 
     while (1) {
-        print_prompt();
+        fprintf(stdout, "shell-prompt> ");
         if (!fgets(cmd_text, MAX_CMD_LEN, stdin)) {
             fprintf(stdout, "\n");
-            exit(EXIT_SUCCESS);
+            return EXIT_SUCCESS;
         }
-        remove_end_of_line(cmd_text);
-        num_commands = 0;
-        commands = get_commands(cmd_text, &num_commands);
-        if(num_commands)
-            execute_commands(commands, num_commands);
-        free(commands);
+        execute_line(cmd_text);
     } /* run till 'quit' is called  */
     return 0;
 }
 
 int run_in_batch_mode(const char *file)
 {
+    char cmd_text[MAX_CMD_LEN];
+    FILE *fp;
+
+    fp = fopen(file, "r");
+    if (!fp) {
+        fprintf(stderr, "shell: Error opening file %s\n", file);
+        return EXIT_FAILURE;
+    }
+    while (fgets(cmd_text, MAX_CMD_LEN, fp)) {
+        fprintf(stdout, "shell: execute: %s", cmd_text);
+        execute_line(cmd_text);
+    }
+    fclose(fp);
     return 0;
 }
 
@@ -193,8 +201,8 @@ int main(int argc, char *argv[])
     int ret_val = 0;
 
     if (argc > 2) {
-        print_error("Invalid arguments");
-        print_error("Usage: shell <file>");
+        fprintf(stderr, "shell: Invalid arguments\n");
+        fprintf(stderr, "shell: Usage: shell [script_file]\n");
         exit(EXIT_FAILURE);
     }
 
@@ -202,7 +210,7 @@ int main(int argc, char *argv[])
         ret_val = run_in_interactive_mode();
     } /* if no batch file specified */
     else {
-        ret_val = run_in_batch_mode(*argv);
+        ret_val = run_in_batch_mode(argv[1]);
     } /* if batch file specified  */
     
     return ret_val;
